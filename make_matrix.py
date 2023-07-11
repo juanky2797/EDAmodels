@@ -40,7 +40,7 @@ def keep_subtask(mat, initTime, finTime):
     return mat
 
 
-def couple_data_with_label(userID, signals, data_dir='/Users/juanky/Documents/nokia_data/', save_dir='/Users/juanky/Documents/nokia_data/save_data',
+def couple_data_with_label(userID, signals, data_dir='/Users/juanky/Documents/nokia_data/', save_dir='/Users/juanky/Documents/nokia_data/new_data/',
                            tasks=['stroop', 'subtraction', 'reading']):
     # userID directory
     user_dir = data_dir + userID + '/'

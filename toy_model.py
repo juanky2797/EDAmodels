@@ -6,18 +6,37 @@ Created on Mon Mar 16 16:09:11 2020
 @author: apatane
 """
 import numpy as np
-from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score
 # import os
 from sklearn.naive_bayes import GaussianNB
 from sklearn import svm
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import mutual_info_classif, RFECV, SelectKBest, f_classif
 from sklearn.decomposition import PCA
-from my_utils import load_data_features, normalisation
+from sklearn.neural_network import MLPClassifier
+
+from my_utils import load_data_features, normalisation, data_augmentation
 from mlxtend.feature_selection import SequentialFeatureSelector as SFS
 import pickle
+import matplotlib
+matplotlib.use('TkAgg')
+import matplotlib.pyplot as plt
 
 np.random.seed(25)
+
+
+def jitter(X, sigma=0.05):
+    myNoise = np.random.normal(loc=0, scale=sigma, size=X.shape)
+    return X + myNoise
+
+
+def time_warp(X, sigma=0.2):
+    tt = np.arange(X.shape[0])
+    tt_new = tt + np.random.normal(loc=0, scale=sigma, size=tt.shape)
+    tt_new = np.clip(tt_new, 0, X.shape[0] - 1)
+    X_new = np.zeros_like(X)
+    for i in range(X.shape[1]):
+        X_new[:, i] = np.interp(tt, tt_new, X[:, i])
+    return X_new
 
 
 def perform_loo_validation(signals, tasks, userIDs, classifier, feature_selection, max_num_of_feats, labels, names=[''],
@@ -41,6 +60,10 @@ def perform_loo_validation(signals, tasks, userIDs, classifier, feature_selectio
                                               win_size=win_size, overlap=overlap)
         x_val, y_val = load_data_features(val_users, signals, tasks, labels=labels, subj_thre=3, win_size=win_size,
                                           overlap=overlap)
+
+        if classifier == 'MLP':
+            x_train, y_train = data_augmentation(x_train, y_train)
+
         if labels == 'subjective':
             _, task_val = load_data_features(val_users, signals, tasks, labels='objective', subj_thre=3,
                                              win_size=win_size, overlap=overlap)
@@ -74,10 +97,10 @@ def perform_loo_validation(signals, tasks, userIDs, classifier, feature_selectio
                 if signals == ['eda']:
                     MAX_DEPTH = 3
                     N_ESTIMATORS = 25
-                elif signals == ['mic']:
+                elif signals == ['bvp']:
                     MAX_DEPTH = 3
                     N_ESTIMATORS = 100
-                elif signals == ['imu']:
+                elif signals == ['temp']:
                     MAX_DEPTH = 1
                     N_ESTIMATORS = 200
                 else:
@@ -86,6 +109,9 @@ def perform_loo_validation(signals, tasks, userIDs, classifier, feature_selectio
 
                 clf = RandomForestClassifier(max_depth=MAX_DEPTH,
                                              n_estimators=N_ESTIMATORS)
+            elif classifier == 'MLP':
+
+                clf = MLPClassifier(hidden_layer_sizes=(100, 100), max_iter=1000)
             else:
                 raise ValueError('Classifier not supported')
 
@@ -171,18 +197,6 @@ def perform_loo_validation(signals, tasks, userIDs, classifier, feature_selectio
             y_val_hat_task_one_prediction = float(np.mean(y_val_hat_task_one) >= 0.5)
             y_val_hat_task_zero_prediction = float(np.mean(y_val_hat_task_zero) >= 0.5)
 
-            train_auc.append(roc_auc_score(y_train, y_train_hat))
-            val_auc.append(roc_auc_score(y_val, y_val_hat))
-
-            train_precision.append(precision_score(y_train, y_train_hat))
-            val_precision.append(precision_score(y_val, y_val_hat))
-
-            train_recall.append(recall_score(y_train, y_train_hat))
-            val_recall.append(recall_score(y_val, y_val_hat))
-
-            train_f1.append(f1_score(y_train, y_train_hat))
-            val_f1.append(f1_score(y_val, y_val_hat))
-
             one_idx = np.nonzero(y_val == 1)[0]
             zero_idx = np.nonzero(y_val == 0)[0]
             y_val_task = np.concatenate((y_val[one_idx], y_val[zero_idx]))
@@ -197,7 +211,7 @@ def perform_loo_validation(signals, tasks, userIDs, classifier, feature_selectio
     # print('Training Accuracy: ' + str(np.mean(train_acc)))
     # print('Validation Accuracy: ' + str(np.mean(val_acc)))
     # return np.mean(train_acc), np.mean(val_acc), np.std(train_acc), np.std(val_acc)
-    return train_acc, val_acc, train_precision, val_precision, train_recall, val_recall, train_f1, val_f1, train_auc, val_auc
+    return train_acc, val_acc, train_acc, val_acc, n_features
 
 
 def parametric_analysis_of_methods(signals, tasks, userIDs, classifiers, labels,
@@ -342,6 +356,8 @@ def parametric_analysis_of_methods(signals, tasks, userIDs, classifiers, labels,
     return mat_val_means, mat_val_stds
 
 
+
+
 if __name__ == '__main__':
     # signals = ['eda']
 
@@ -349,14 +365,14 @@ if __name__ == '__main__':
     # overlap_vec = [True,True,True,True,True,False]
 
     additional_res_id = ''
-    signals = ['eda', 'bvp', 'temp']
+    signals = ['bvp']
     labels = 'subjective'
     userIDs = ['1', '3', '4', '5', '6', '8', '9', '10', '11', '12', '13', '14', '15', '16']
     methods = ['NB', 'SVM', 'RFC']
-    # methods = ['SVM']
+    #methods = ['MLP']
     feat_selects = ['none', 'MI', 'PCA', 'ANOVA', 'SFS', 'BFS']
-    # feat_selects = ['naming_imu']
-    # feat_selects = ['none']
+    #feat_selects = ['naming_imu']
+    #feat_selects = ['none']
     # feat_selects = ['none','MI','naming']
     # names_vec = [['mfcc'],['chroma'],['mel'],['mfcc','chroma'],['mfcc','mel'],['chroma','mel'] ]
     # names_vec = ['time','freq','acc','gyro','gyro_time','acc_time','gyro_freq','acc_freq','_m']
@@ -392,6 +408,5 @@ if __name__ == '__main__':
                                  additional_res_id +
                                  '.p')
             pickle.dump([mat_val_means, mat_val_stds], open(results_file_name, 'wb'))
+            mat_val_means, mat_val_stds = pickle.load(open(results_file_name, 'rb'))
             print(np.mean(mat_val_means, axis=2))
-
-

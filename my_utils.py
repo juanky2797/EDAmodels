@@ -194,7 +194,7 @@ def load_and_splice_raw_audio_signal_and_save(users, signals, tasks, dataDir='re
     return
 
 
-def load_data_features(users, signals, tasks, dataDir='/Users/juanky/Documents/nokia_data/', labels='objective', subj_thre=3, win_size=300,
+def load_data_features(users, signals, tasks, dataDir='/Users/juanky/Documents/nokia_data/new_data/', labels='objective', subj_thre=3, win_size=300,
                        overlap=False):
     xs = []
     ys = []
