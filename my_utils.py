@@ -50,7 +50,8 @@ def get_subjective_labels(userID, task, difficulty):
     return subjective_ranking[int(userID) - 1][task_idx][difficulty_idx]
 
 
-def load_and_splice_raw_signal(users, signals, tasks, dataDir='record/data/', labels='objective', win_size=300,
+def load_and_splice_raw_signal(users, signals, tasks, dataDir='/Users/juanky/Documents/nokia_data/new_data/',
+                               labels='objective', win_size=400,
                                overlap=False):
     xs = []
     ys = []
@@ -61,24 +62,29 @@ def load_and_splice_raw_signal(users, signals, tasks, dataDir='record/data/', la
         step_size = win_size
 
     for uID in users:
-        # print(uID)
         for t in tasks:
-            # print(t)
             for s in signals:
                 hard_file = dataDir + uID + '/' + t + '_0/' + s + '.csv'
                 easy_file = dataDir + uID + '/' + t + '_1/' + s + '.csv'
 
                 if os.path.exists(hard_file):
-
                     hard_signal = np.loadtxt(hard_file, delimiter=',')
                     start_point = 0
                     end_point = start_point + win_size
-                    while start_point < 300:  # it's 5 minutes of signal
-                        # print([start_point,end_point])
+                    while start_point < 500:  # it's 5 minutes of signal
                         hard_idxs = (hard_signal[:, 0] <= end_point) & (hard_signal[:, 0] >= start_point)
                         hard_signal_curr = hard_signal[hard_idxs, :]
                         if len(hard_signal_curr) > 0:
                             hard_signal_curr[:, 0] = hard_signal_curr[:, 0] - hard_signal_curr[0, 0]
+
+                            # Ensure all sequences have the same length
+                            if hard_signal_curr.shape[0] < win_size:
+                                hard_signal_curr = np.pad(hard_signal_curr,
+                                                          ((0, win_size - hard_signal_curr.shape[0]), (0, 0)),
+                                                          'constant', constant_values=0)
+                            elif hard_signal_curr.shape[0] > win_size:
+                                hard_signal_curr = hard_signal_curr[:win_size, :]
+
                             xs.append(hard_signal_curr)
                             if labels == 'objective':
                                 ys.append(1)
@@ -90,16 +96,23 @@ def load_and_splice_raw_signal(users, signals, tasks, dataDir='record/data/', la
                         end_point = end_point + step_size
 
                 if os.path.exists(easy_file):
-
                     easy_signal = np.loadtxt(easy_file, delimiter=',')
                     start_point = 0
                     end_point = start_point + win_size
-                    while start_point < 300:  # it's 5 minutes of signal
-                        # print([start_point,end_point])
+                    while start_point < 500:  # it's 5 minutes of signal
                         easy_idxs = (easy_signal[:, 0] <= end_point) & (easy_signal[:, 0] >= start_point)
                         easy_signal_curr = easy_signal[easy_idxs, :]
                         if len(easy_signal_curr) > 0:
                             easy_signal_curr[:, 0] = easy_signal_curr[:, 0] - easy_signal_curr[0, 0]
+
+                            # Ensure all sequences have the same length
+                            if easy_signal_curr.shape[0] < win_size:
+                                easy_signal_curr = np.pad(easy_signal_curr,
+                                                          ((0, win_size - easy_signal_curr.shape[0]), (0, 0)),
+                                                          'constant', constant_values=0)
+                            elif easy_signal_curr.shape[0] > win_size:
+                                easy_signal_curr = easy_signal_curr[:win_size, :]
+
                             xs.append(easy_signal_curr)
                             if labels == 'objective':
                                 ys.append(0)
@@ -109,6 +122,81 @@ def load_and_splice_raw_signal(users, signals, tasks, dataDir='record/data/', la
                             ts.append(t + '_easy')
                         start_point = start_point + step_size
                         end_point = end_point + step_size
+
+    return xs, ys, ts
+
+def load_and_splice_raw_signal2(users, signals, tasks, dataDir='/Users/juanky/Documents/nokia_data/new_data/',
+                               labels='objective', win_size=400,
+                               overlap=False):
+    xs = []
+    ys = []
+    ts = []
+    if overlap:
+        step_size = int(0.5 * win_size)
+    else:
+        step_size = win_size
+
+    for uID in users:
+        for t in tasks:
+            hard_file = dataDir + uID + '/' + t + '_0/' + signals + '.csv'
+            easy_file = dataDir + uID + '/' + t + '_1/' + signals + '.csv'
+
+            if os.path.exists(hard_file):
+                hard_signal = np.loadtxt(hard_file, delimiter=',')
+                start_point = 0
+                end_point = start_point + win_size
+                while start_point < 500:  # it's 5 minutes of signal
+                    hard_idxs = (hard_signal[:, 0] <= end_point) & (hard_signal[:, 0] >= start_point)
+                    hard_signal_curr = hard_signal[hard_idxs, :]
+                    if len(hard_signal_curr) > 0:
+                        hard_signal_curr[:, 0] = hard_signal_curr[:, 0] - hard_signal_curr[0, 0]
+
+                            # Ensure all sequences have the same length
+                        if hard_signal_curr.shape[0] < win_size:
+                            hard_signal_curr = np.pad(hard_signal_curr,
+                                                    ((0, win_size - hard_signal_curr.shape[0]), (0, 0)),
+                                                          'constant', constant_values=0)
+                        elif hard_signal_curr.shape[0] > win_size:
+                                hard_signal_curr = hard_signal_curr[:win_size, :]
+
+                        xs.append(hard_signal_curr)
+                        if labels == 'objective':
+                            ys.append(1)
+                        elif labels == 'subjective':
+                            y_curr = get_subjective_labels(uID, t, 'hard')
+                            ys.append(y_curr)
+                        ts.append(t + '_hard')
+                    start_point = start_point + step_size
+                    end_point = end_point + step_size
+
+            if os.path.exists(easy_file):
+                easy_signal = np.loadtxt(easy_file, delimiter=',')
+                start_point = 0
+                end_point = start_point + win_size
+                while start_point < 500:  # it's 5 minutes of signal
+                    easy_idxs = (easy_signal[:, 0] <= end_point) & (easy_signal[:, 0] >= start_point)
+                    easy_signal_curr = easy_signal[easy_idxs, :]
+                    if len(easy_signal_curr) > 0:
+                        easy_signal_curr[:, 0] = easy_signal_curr[:, 0] - easy_signal_curr[0, 0]
+
+                            # Ensure all sequences have the same length
+                        if easy_signal_curr.shape[0] < win_size:
+                            easy_signal_curr = np.pad(easy_signal_curr,
+                                                          ((0, win_size - easy_signal_curr.shape[0]), (0, 0)),
+                                                          'constant', constant_values=0)
+                        elif easy_signal_curr.shape[0] > win_size:
+                             easy_signal_curr = easy_signal_curr[:win_size, :]
+
+                        xs.append(easy_signal_curr)
+                        if labels == 'objective':
+                            ys.append(0)
+                        elif labels == 'subjective':
+                            y_curr = get_subjective_labels(uID, t, 'easy')
+                            ys.append(y_curr)
+                        ts.append(t + '_easy')
+                    start_point = start_point + step_size
+                    end_point = end_point + step_size
+
     return xs, ys, ts
 
 
@@ -255,6 +343,7 @@ def load_data_features(users, signals, tasks, dataDir='/Users/juanky/Documents/n
                         count = count + 1
                     else:
                         break
+                    count = count + 1
     ys = np.asarray(ys)
     if labels == 'subjective':
         pos_idxs = (ys > subj_thre)
@@ -262,7 +351,7 @@ def load_data_features(users, signals, tasks, dataDir='/Users/juanky/Documents/n
         ys[pos_idxs] = 1
         ys[neg_idxs] = 0
     return np.asarray(xs), ys
-
+    # return xs, np.asarray(ys)
 
 def load_features_sequences(users, signals, tasks, expected_len, dataDir='record/data/',
                             labels='objective', subj_thre=3, win_size=300, overlap=0,
@@ -415,7 +504,24 @@ def normalisation(x, mu=[], std=[]):
 
     return x, mu, std
 
+def normalisation1(x_train, mu=None, std=None):
+    if mu is None:
+        mu = []
+    if std is None:
+        std = []
 
+    res = []
+    for x in x_train:
+        n_feats = x.shape[1]
+        if not mu:
+            mu.append(np.mean(x[:, 1]))
+        if not std:
+            std.append(np.std(x[:, 1]))
+
+        x[:, 1] = (x[:, 1] - mu[0]) / std[0]
+
+        res.append(x)
+    return res, mu, std
 def per_channel_signal_normalisation(x_set, mu=[], std=[]):
     n_ch = x_set.shape[2]
 
@@ -546,13 +652,15 @@ def data_augmentation(x_train, y_train):
             x_train_aug.append(x_mod)
             y_train_aug.append(curr_y_train)
         d = np.asarray([np.linalg.norm(curr_x_train - x_train[j]) for j in range(len(x_train))])
-        idxes = np.argsort(d[d > 0])
+        valid_idxes = np.arange(len(d))[d > 0]
+        idxes = np.argsort(d[valid_idxes])
+        sorted_valid_idxes = valid_idxes[idxes]
         count = 0
         j = 0
-        while (count < n_interp) and j < (len(idxes)):
-            curr_idx = idxes[j]
+        while (count < n_interp) and j < (len(sorted_valid_idxes)):
+            curr_idx = sorted_valid_idxes[j]
             if curr_y_train == y_train[curr_idx]:
-                x_2_interp = x_train[d > 0][curr_idx]
+                x_2_interp = x_train[curr_idx]
                 x_mod = curr_x_train + 0.5 * (x_2_interp - curr_x_train)
                 x_train_aug.append(x_mod)
                 y_train_aug.append(curr_y_train)
@@ -572,3 +680,49 @@ def data_augmentation(x_train, y_train):
             j = j + 1
 
     return np.asarray(x_train_aug), np.asarray(y_train_aug)
+
+
+import numpy as np
+
+
+def jitter(x, std_dev=0.01):
+    noise = np.random.normal(loc=0, scale=std_dev, size=x.shape)
+    return x + noise
+
+
+def scaling(x, scale_range=(0.9, 1.1)):
+    scaling_factor = np.random.uniform(*scale_range)
+    return x * scaling_factor
+
+
+def augment_eda_data(x_train, y_train, num_augmentations=10):
+    x_train_aug = []
+    y_train_aug = []
+
+    # Assuming x is a list of 2D arrays and y is a list of labels
+    for x, y in zip(x_train, y_train):
+        # Original data
+        x_train_aug.append(x)
+        y_train_aug.append(y)
+
+        # Separate timestamps and EDA
+        timestamps = x[:, 0]
+        eda_values = x[:, 1]
+
+        for _ in range(num_augmentations):
+            # Jittered data
+            jittered_eda_values = jitter(eda_values)
+            x_jitter = np.column_stack((timestamps, jittered_eda_values))
+            x_train_aug.append(x_jitter)
+            y_train_aug.append(y)
+
+            # Scaled data
+            scaled_eda_values = scaling(eda_values)
+            x_scaled = np.column_stack((timestamps, scaled_eda_values))
+            x_train_aug.append(x_scaled)
+            y_train_aug.append(y)
+
+    return np.array(x_train_aug), np.array(y_train_aug)
+
+
+

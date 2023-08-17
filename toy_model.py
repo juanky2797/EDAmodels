@@ -6,6 +6,7 @@ Created on Mon Mar 16 16:09:11 2020
 @author: apatane
 """
 import numpy as np
+from sklearn.metrics import f1_score, roc_auc_score, roc_curve
 # import os
 from sklearn.naive_bayes import GaussianNB
 from sklearn import svm
@@ -18,40 +19,23 @@ from my_utils import load_data_features, normalisation, data_augmentation
 from mlxtend.feature_selection import SequentialFeatureSelector as SFS
 import pickle
 import matplotlib
+
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 
 np.random.seed(25)
 
 
-def jitter(X, sigma=0.05):
-    myNoise = np.random.normal(loc=0, scale=sigma, size=X.shape)
-    return X + myNoise
-
-
-def time_warp(X, sigma=0.2):
-    tt = np.arange(X.shape[0])
-    tt_new = tt + np.random.normal(loc=0, scale=sigma, size=tt.shape)
-    tt_new = np.clip(tt_new, 0, X.shape[0] - 1)
-    X_new = np.zeros_like(X)
-    for i in range(X.shape[1]):
-        X_new[:, i] = np.interp(tt, tt_new, X[:, i])
-    return X_new
-
-
 def perform_loo_validation(signals, tasks, userIDs, classifier, feature_selection, max_num_of_feats, labels, names=[''],
                            win_size=300, overlap=False):
-    train_acc = []
-    val_acc = []
-    train_precision = []
-    val_precision = []
-    train_recall = []
-    val_recall = []
-    train_f1 = []
-    val_f1 = []
-    train_auc = []
-    val_auc = []
 
+    train_f1 = []
+    train_auc = []
+    train_acc = []
+
+    val_f1 = []
+    val_auc = []
+    val_acc = []
     for i in range(len(userIDs)):
         train_users = userIDs[:i] + userIDs[(i + 1):]
         val_users = [userIDs[i]]
@@ -61,14 +45,14 @@ def perform_loo_validation(signals, tasks, userIDs, classifier, feature_selectio
         x_val, y_val = load_data_features(val_users, signals, tasks, labels=labels, subj_thre=3, win_size=win_size,
                                           overlap=overlap)
 
-        if classifier == 'MLP':
-            x_train, y_train = data_augmentation(x_train, y_train)
-
         if labels == 'subjective':
             _, task_val = load_data_features(val_users, signals, tasks, labels='objective', subj_thre=3,
                                              win_size=win_size, overlap=overlap)
+            _, task_train = load_data_features(train_users, signals, tasks, labels='objective', subj_thre=3,
+                                             win_size=win_size, overlap=overlap)
         else:
             task_val = y_val
+            task_train = y_train
         n_features = x_train.shape[1]
         if len(x_val) > 0:
             # print('Currently analysing user ' + val_users)
@@ -88,7 +72,7 @@ def perform_loo_validation(signals, tasks, userIDs, classifier, feature_selectio
                 elif signals == ['temp']:
                     C = 1.0
                 else:
-                    C = 1.0  # Default C for other signal types
+                    raise ValueError('Signals specific hyper-parameters not yet implemented')
 
                 clf = svm.SVC(C=C)
 
@@ -99,19 +83,15 @@ def perform_loo_validation(signals, tasks, userIDs, classifier, feature_selectio
                     N_ESTIMATORS = 25
                 elif signals == ['bvp']:
                     MAX_DEPTH = 3
-                    N_ESTIMATORS = 100
-                elif signals == ['temp']:
-                    MAX_DEPTH = 1
-                    N_ESTIMATORS = 200
+                    N_ESTIMATORS = 25
+                elif signals == ['bvp']:
+                    MAX_DEPTH = 3
+                    N_ESTIMATORS = 25
                 else:
-                    MAX_DEPTH = 1  # Default MAX_DEPTH for other signal types
-                    N_ESTIMATORS = 100  # Default N_ESTIMATORS for other signal types
+                    raise ValueError('Signals specific hyper-parameters not yet implemented')
 
                 clf = RandomForestClassifier(max_depth=MAX_DEPTH,
                                              n_estimators=N_ESTIMATORS)
-            elif classifier == 'MLP':
-
-                clf = MLPClassifier(hidden_layer_sizes=(100, 100), max_iter=1000)
             else:
                 raise ValueError('Classifier not supported')
 
@@ -156,28 +136,6 @@ def perform_loo_validation(signals, tasks, userIDs, classifier, feature_selectio
                 x_val = pca.transform(x_val)
                 # x_train = x_train[:,feat_idxs[0]]
                 # x_val = x_val[:,feat_idxs[0]]
-
-            elif feature_selection == 'naming_mic':
-                idxs = []
-                # mfcs: 0:39   #chroma: 0:11   #mel: 0:127
-                if 'mfcc' in names:
-                    idxs = idxs + np.arange(0, 40).tolist()
-                if 'chroma' in names:
-                    idxs = idxs + np.arange(40, 40 + 12).tolist()
-                if 'mel' in names:
-                    idxs = idxs + np.arange(40 + 12, 40 + 12 + 128).tolist()
-                x_train = x_train[:, idxs]
-                x_val = x_val[:, idxs]
-            elif feature_selection == 'naming_imu':
-                idxs = []
-                feature_names = pickle.load(open('feat_names_imu.p', 'rb'))
-                # currBoolVals = np.asarray([True for _ in range(len(feature_names))] )
-                # for curr_name in names:
-                currBoolVals = np.asarray([names in el for el in feature_names])
-                idxs = np.nonzero(currBoolVals)[0].tolist()
-
-                x_train = x_train[:, idxs]
-                x_val = x_val[:, idxs]
             else:
                 raise ValueError('Feature selection method not supported')
 
@@ -186,13 +144,26 @@ def perform_loo_validation(signals, tasks, userIDs, classifier, feature_selectio
             y_train_hat = clf.predict(x_train)
             train_acc.append(np.mean(y_train_hat == y_train))
 
+            train_f1.append(f1_score(y_train, y_train_hat, average='macro'))
+
+            if len(np.unique(y_train)) > 1:  # check if there are enough unique values to compute AUC
+                train_auc.append(roc_auc_score(y_train, y_train_hat))
+
             y_val_hat = clf.predict(x_val)
+            y_val_scores = clf.predict_proba(x_val)[:, 1]  # probabilities for the positive outcome
 
             task_one_idx = (task_val == 1)
             task_zero_idx = (task_val == 0)
 
             y_val_hat_task_one = y_val_hat[task_one_idx]
             y_val_hat_task_zero = y_val_hat[task_zero_idx]
+
+            val_f1.append(f1_score(y_val, y_val_hat, average='macro'))
+
+            if len(np.unique(y_val)) > 1:  # check if there are enough unique values to compute AUC
+                val_auc.append(roc_auc_score(y_val, y_val_hat))
+
+            fpr, tpr, thresholds = roc_curve(y_val, y_val_scores)
 
             y_val_hat_task_one_prediction = float(np.mean(y_val_hat_task_one) >= 0.5)
             y_val_hat_task_zero_prediction = float(np.mean(y_val_hat_task_zero) >= 0.5)
@@ -202,159 +173,191 @@ def perform_loo_validation(signals, tasks, userIDs, classifier, feature_selectio
             y_val_task = np.concatenate((y_val[one_idx], y_val[zero_idx]))
             y_val_hat_task = np.asarray([y_val_hat_task_one_prediction, y_val_hat_task_zero_prediction])
             val_acc.append(np.mean(y_val_task == y_val_hat_task))
-
         else:
             pass
-            # print('Failed for user ' + val_users + ' as there are not enough samples ')
-            # print(val_users)
 
-    # print('Training Accuracy: ' + str(np.mean(train_acc)))
-    # print('Validation Accuracy: ' + str(np.mean(val_acc)))
-    # return np.mean(train_acc), np.mean(val_acc), np.std(train_acc), np.std(val_acc)
-    return train_acc, val_acc, train_acc, val_acc, n_features
+    return train_acc, val_acc, train_f1, val_f1, train_auc, val_auc, n_features, fpr, tpr, thresholds
 
 
-def parametric_analysis_of_methods(signals, tasks, userIDs, classifiers, labels,
+def parametric_analysis_of_methods(signals, tasks, userIDs, classifiers, labels, results,
                                    feat_selects=['none', 'MI', 'SFS', 'BFS'], max_features=np.inf, step_hop=5,
                                    names_vec=[],
                                    win_size=300, overlap=False):
-    mat_val_means = []
-    mat_val_stds = []
     for classifier in classifiers:
         print('Currently using ' + classifier)
 
-        curr_val_means = []
-        curr_val_stds = []
         if 'none' in feat_selects:
             print('none')
-            _, val_acc, _, val_std, max_features = perform_loo_validation(signals,
-                                                                          tasks,
-                                                                          userIDs,
-                                                                          classifier,
-                                                                          'none',
-                                                                          np.nan,
-                                                                          labels,
-                                                                          win_size=win_size,
-                                                                          overlap=overlap)
-            curr_val_means.append(val_acc)
-            curr_val_stds.append(val_std)
+            train_acc, val_acc, train_f1, val_f1, train_auc, val_auc, max_features, fpr, tpr, thresholds = perform_loo_validation(signals,
+                                                                                                          tasks,
+                                                                                                          userIDs,
+                                                                                                          classifier,
+                                                                                                          'none',
+                                                                                                          np.nan,
+                                                                                                          labels,
+                                                                                                          win_size=win_size,
+                                                                                                          overlap=overlap)
+
+            results[labels][classifier][tasks[0]]['none'] = {"val_acc": np.mean(val_acc),
+                                                             "val_stds": np.std(val_acc),
+                                                             "f1_val_means": np.mean(val_f1),
+                                                             "f1_val_stds": np.std(val_f1),
+                                                             "auc_val_means": np.mean(val_auc),
+                                                             "auc_val_stds": np.std(val_auc),
+                                                             "train_acc": np.mean(train_acc),
+                                                             "train_stds": np.std(train_acc),
+                                                             "auc_train_means": np.mean(train_auc),
+                                                             "f1_train_means": np.mean(train_f1),
+                                                             "fpr": fpr,
+                                                             "tpr": tpr,
+                                                             "thresholds": thresholds,
+                                                             }
 
         if 'MI' in feat_selects:
             print('MI')
-            _, val_acc, _, val_std, _ = perform_loo_validation(signals,
-                                                               tasks,
-                                                               userIDs,
-                                                               classifier,
-                                                               'MI',
-                                                               np.nan,
-                                                               labels,
-                                                               win_size=win_size,
-                                                               overlap=overlap)
-            curr_val_means.append(val_acc)
-            curr_val_stds.append(val_std)
+            train_acc, val_acc, train_f1, val_f1, train_auc, val_auc, _, fpr, tpr, thresholds = perform_loo_validation(signals,
+                                                                                               tasks,
+                                                                                               userIDs,
+                                                                                               classifier,
+                                                                                               'MI',
+                                                                                               np.nan,
+                                                                                               labels,
+                                                                                               win_size=win_size,
+                                                                                               overlap=overlap)
 
-        # if 'naming' in feat_selects:
-        #    for names in names_vec:
-        #        _, val_acc, _, val_std, _ = perform_loo_validation(signals,
-        #                                                           tasks,
-        #                                                           userIDs,
-        #                                                           classifier,
-        #                                                           'naming',
-        #                                                           np.nan,
-        #                                                           labels,
-        #                                                           names = names,
-        #                                                           win_size = win_size,
-        #                                                           overlap = overlap)
-        #        curr_val_means.append(val_acc)
-        #        curr_val_stds.append(val_std)
-
-        # if 'naming_imu' in feat_selects:
-        #    #names_vec = []
-        #    for names in names_vec:
-        #        print(names)
-        #        _, val_acc, _, val_std, _ = perform_loo_validation(signals,
-        #                                                           tasks,
-        #                                                           userIDs,
-        #                                                           classifier,
-        #                                                           'naming_imu',
-        #                                                           np.nan,
-        #                                                           labels,
-        #                                                           names = names,
-        #                                                           win_size = win_size,
-        #                                                           overlap = overlap)
-        #        curr_val_means.append(val_acc)
-        #        curr_val_stds.append(val_std)
+            results[labels][classifier][tasks[0]]['MI'] = { "val_acc": np.mean(val_acc),
+                                                            "val_stds": np.std(val_acc),
+                                                            "f1_val_means": np.mean(val_f1),
+                                                            "f1_val_stds": np.std(val_f1),
+                                                            "auc_val_means": np.mean(val_auc),
+                                                            "auc_val_stds": np.std(val_auc),
+                                                            "train_acc": np.mean(train_acc),
+                                                            "train_stds": np.std(train_acc),
+                                                            "auc_train_means": np.mean(train_auc),
+                                                            "f1_train_means": np.mean(train_f1),
+                                                            "fpr": fpr,
+                                                            "tpr": tpr,
+                                                            "thresholds": thresholds,
+                                                             }
 
         if 'SFS' in feat_selects:
             print('Forward...')
             for i in range(step_hop + 1, max_features + 1, step_hop):
                 # print(i)
-                _, val_acc, _, val_std, _ = perform_loo_validation(signals,
-                                                                   tasks,
-                                                                   userIDs,
-                                                                   classifier,
-                                                                   'SFS',
-                                                                   i,
-                                                                   labels,
-                                                                   win_size=win_size,
-                                                                   overlap=overlap)
-                curr_val_means.append(val_acc)
-                curr_val_stds.append(val_std)
+                train_acc, val_acc, train_f1, val_f1, train_auc, val_auc, _, fpr, tpr, thresholds = perform_loo_validation(signals,
+                                                                                                   tasks,
+                                                                                                   userIDs,
+                                                                                                   classifier,
+                                                                                                   'SFS',
+                                                                                                   i,
+                                                                                                   labels,
+                                                                                                   win_size=win_size,
+                                                                                                   overlap=overlap)
+
+                results[labels][classifier][tasks[0]]['SFS'] = { "val_acc": np.mean(val_acc),
+                                                            "val_stds": np.std(val_acc),
+                                                            "f1_val_means": np.mean(val_f1),
+                                                            "f1_val_stds": np.std(val_f1),
+                                                            "auc_val_means": np.mean(val_auc),
+                                                            "auc_val_stds": np.std(val_auc),
+                                                            "train_acc": np.mean(train_acc),
+                                                            "train_stds": np.std(train_acc),
+                                                            "auc_train_means": np.mean(train_auc),
+                                                            "f1_train_means": np.mean(train_f1),
+                                                                 "fpr": fpr,
+                                                                 "tpr": tpr,
+                                                                 "thresholds": thresholds,
+                                                             }
 
         if 'BFS' in feat_selects:
             print('Backward...')
             for i in range(step_hop + 1, max_features + 1, step_hop):
                 # print(i)
-                _, val_acc, _, val_std, _ = perform_loo_validation(signals,
-                                                                   tasks,
-                                                                   userIDs,
-                                                                   classifier,
-                                                                   'SBS',
-                                                                   i,
-                                                                   labels,
-                                                                   win_size=win_size,
-                                                                   overlap=overlap)
-                curr_val_means.append(val_acc)
-                curr_val_stds.append(val_std)
+                train_acc, val_acc, train_f1, val_f1, train_auc, val_auc, _, fpr, tpr, thresholds = perform_loo_validation(signals,
+                                                                                                   tasks,
+                                                                                                   userIDs,
+                                                                                                   classifier,
+                                                                                                   'SBS',
+                                                                                                   i,
+                                                                                                   labels,
+                                                                                                   win_size=win_size,
+                                                                                                   overlap=overlap)
+
+                results[labels][classifier][tasks[0]]['BFS'] = { "val_acc": np.mean(val_acc),
+                                                            "val_stds": np.std(val_acc),
+                                                            "f1_val_means": np.mean(val_f1),
+                                                            "f1_val_stds": np.std(val_f1),
+                                                            "auc_val_means": np.mean(val_auc),
+                                                            "auc_val_stds": np.std(val_auc),
+                                                            "train_acc": np.mean(train_acc),
+                                                            "train_stds": np.std(train_acc),
+                                                            "auc_train_means": np.mean(train_auc),
+                                                            "f1_train_means": np.mean(train_f1),
+                                                                 "fpr": fpr,
+                                                                 "tpr": tpr,
+                                                                 "thresholds": thresholds,
+                                                             }
 
         if 'ANOVA' in feat_selects:
             print('ANOVA...')
             for i in range(step_hop + 1, max_features + 1, step_hop):
                 print(i)
-                _, val_acc, _, val_std, _ = perform_loo_validation(signals,
-                                                                   tasks,
-                                                                   userIDs,
-                                                                   classifier,
-                                                                   'ANOVA',
-                                                                   i,
-                                                                   labels,
-                                                                   win_size=win_size,
-                                                                   overlap=overlap)
-                curr_val_means.append(val_acc)
-                curr_val_stds.append(val_std)
+                train_acc, val_acc, train_f1, val_f1, train_auc, val_auc, _, fpr, tpr, thresholds = perform_loo_validation(signals,
+                                                                                                   tasks,
+                                                                                                   userIDs,
+                                                                                                   classifier,
+                                                                                                   'ANOVA',
+                                                                                                   i,
+                                                                                                   labels,
+                                                                                                   win_size=win_size,
+                                                                                                   overlap=overlap)
+
+                results[labels][classifier][tasks[0]]['ANOVA'] = { "val_acc": np.mean(val_acc),
+                                                            "val_stds": np.std(val_acc),
+                                                            "f1_val_means": np.mean(val_f1),
+                                                            "f1_val_stds": np.std(val_f1),
+                                                            "auc_val_means": np.mean(val_auc),
+                                                            "auc_val_stds": np.std(val_auc),
+                                                            "train_acc": np.mean(train_acc),
+                                                            "train_stds": np.std(train_acc),
+                                                            "auc_train_means": np.mean(train_auc),
+                                                            "f1_train_means": np.mean(train_f1),
+                                                                   "fpr": fpr,
+                                                                   "tpr": tpr,
+                                                                   "thresholds": thresholds,
+                                                             }
 
         if 'PCA' in feat_selects:
             print('PCA...')
             step_hop = 5
             for i in range(step_hop + 1, 2 * (len(userIDs) - 1), step_hop):
                 print(i)
-                _, val_acc, _, val_std, _ = perform_loo_validation(signals,
-                                                                   tasks,
-                                                                   userIDs,
-                                                                   classifier,
-                                                                   'PCA',
-                                                                   i,
-                                                                   labels,
-                                                                   win_size=win_size,
-                                                                   overlap=overlap)
-                curr_val_means.append(val_acc)
-                curr_val_stds.append(val_std)
+                train_acc, val_acc, train_f1, val_f1, train_auc, val_auc, _, fpr, tpr, thresholds = perform_loo_validation(signals,
+                                                                                                   tasks,
+                                                                                                   userIDs,
+                                                                                                   classifier,
+                                                                                                   'PCA',
+                                                                                                   i,
+                                                                                                   labels,
+                                                                                                   win_size=win_size,
+                                                                                                   overlap=overlap)
 
-        mat_val_means.append(curr_val_means)
-        mat_val_stds.append(curr_val_stds)
+                results[labels][classifier][tasks[0]]['PCA'] = { "val_acc": np.mean(val_acc),
+                                                            "val_stds": np.std(val_acc),
+                                                            "f1_val_means": np.mean(val_f1),
+                                                            "f1_val_stds": np.std(val_f1),
+                                                            "auc_val_means": np.mean(val_auc),
+                                                            "auc_val_stds": np.std(val_auc),
+                                                            "train_acc": np.mean(train_acc),
+                                                            "train_stds": np.std(train_acc),
+                                                            "auc_train_means": np.mean(train_auc),
+                                                            "f1_train_means": np.mean(train_f1),
+                                                                 "fpr": fpr,
+                                                                 "tpr": tpr,
+                                                                 "thresholds": thresholds,
+                                                             }
 
-    return mat_val_means, mat_val_stds
-
+    return results
 
 
 
@@ -365,21 +368,26 @@ if __name__ == '__main__':
     # overlap_vec = [True,True,True,True,True,False]
 
     additional_res_id = ''
-    signals = ['bvp']
-    labels = 'subjective'
+    signals = ['eda']
+    labels = 'objective'
     userIDs = ['1', '3', '4', '5', '6', '8', '9', '10', '11', '12', '13', '14', '15', '16']
-    methods = ['NB', 'SVM', 'RFC']
-    #methods = ['MLP']
-    feat_selects = ['none', 'MI', 'PCA', 'ANOVA', 'SFS', 'BFS']
-    #feat_selects = ['naming_imu']
-    #feat_selects = ['none']
+    #methods = ['NB', 'SVM', 'RFC']
+    methods = ['NB']
+    #methods = ['SVM']
+    #methods = ['RFC']
+    #feat_selects = ['none', 'MI', 'PCA', 'ANOVA', 'SFS', 'BFS']
+    # feat_selects = ['naming_imu']
+    feat_selects = ['none']
     # feat_selects = ['none','MI','naming']
     # names_vec = [['mfcc'],['chroma'],['mel'],['mfcc','chroma'],['mfcc','mel'],['chroma','mel'] ]
     # names_vec = ['time','freq','acc','gyro','gyro_time','acc_time','gyro_freq','acc_freq','_m']
     # task_to_analyse = ['stroop','reading','subtraction','all_tasks']
-    task_to_analyse = ['stroop']
+    task_to_analyse = ['reading']
     step_hop = 5
     # task_to_analyse = ['reading']
+    results = {}
+    results_final = {}
+
     for m in methods:
         for tt in task_to_analyse:
             if tt == 'all_tasks':
@@ -388,25 +396,22 @@ if __name__ == '__main__':
                 tasks = [tt]
             classifiers = [m]
             print(tasks[0])
+            results[labels] = {}
+            results[labels][classifiers[0]] = {}
+            results[labels][classifiers[0]][tasks[0]] = {}
 
-            mat_val_means, mat_val_stds = parametric_analysis_of_methods(signals,
-                                                                         tasks,
-                                                                         userIDs,
-                                                                         classifiers,
-                                                                         labels,
-                                                                         feat_selects=feat_selects,
-                                                                         step_hop=step_hop,
-                                                                         names_vec=np.nan,
-                                                                         win_size=np.nan,
-                                                                         overlap=np.nan)
+            results_final = parametric_analysis_of_methods(signals, tasks, userIDs, classifiers, labels, results,
+                                                           feat_selects=feat_selects, step_hop=step_hop,
+                                                           names_vec=np.nan, win_size=np.nan, overlap=np.nan)
 
-            results_file_name = ('/Users/juanky/Documents/nokia_data/' +
-                                 labels + '_' +
-                                 m + '_' +
-                                 tt + '_' +
-                                 signals[0] + '_' +
-                                 additional_res_id +
-                                 '.p')
-            pickle.dump([mat_val_means, mat_val_stds], open(results_file_name, 'wb'))
-            mat_val_means, mat_val_stds = pickle.load(open(results_file_name, 'rb'))
-            print(np.mean(mat_val_means, axis=2))
+
+            results_file_name = ('/Users/juanky/Documents/nokia_data/new_results/' +
+                     labels + '_' +
+                     m + '_' +
+                     tt + '_' +
+                     signals[0] + '_' +
+                     'auc' +
+                     '.txt')
+            print(results_final)
+
+            pickle.dump([results_final], open(results_file_name, 'wb'))

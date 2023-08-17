@@ -162,7 +162,7 @@ def feat_extract_dummy(eda_in, title_plot=''):
 
 
 def save_EDA_features2file(userID, task, data_dir='/Users/juanky/Documents/nokia_data/new_data/', offset=0):
-    signal = 'temp'
+    signal = 'eda'
     data_dir = data_dir + userID + '/' + task
     easy_dir = data_dir + '_1/'
     hard_dir = data_dir + '_0/'
